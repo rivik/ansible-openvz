@@ -1,0 +1,65 @@
+#!/usr/bin/python
+# -*- coding: utf-8 -*-
+
+import socket
+
+def main():
+    arg_spec  = dict(
+        ctid       = dict(required=False, type='int'),
+        ostemplate = dict(default='ubuntu-12.04-x86_64', type='str'),
+        name       = dict(required=False, type='str'),
+        hostname       = dict(required=False, type='str'),
+        ip         = dict(required=False, type='str'),
+
+        ram            = dict(default='512M', type='str'),
+        swap           = dict(default='0G', type='str'),
+        nameserver     = dict(default='77.88.8.8', type='str'),
+        searchdomain   = dict(default='yandex.ru yandex.net', type='str'),
+        onboot         = dict(default='yes', type='str'),
+        diskspace      = dict(default='10G:10G', type='str'),
+    )
+    module = AnsibleModule(argument_spec = arg_spec)
+
+    # check params
+    params = module.params
+    if params['ctid'] == None:
+        rc, vzlist, vzlist_err = module.run_command('vzlist -Hajo ctid')
+        if rc != 0:
+            module.fail_json(msg='CTID not specified, unable to determine it automatically',
+                             vzlist_err=vzlist_err)
+        vzlist = sorted(map(lambda k: k[u'ctid'], module.from_json(vzlist)))
+        if not vzlist: vzlist = [0]
+        params['ctid'] = vzlist[-1] + 1
+
+    if params['hostname'] and not params['ip']:
+        try:
+            res = socket.getaddrinfo(params['hostname'], None, socket.AF_INET)
+            params['ip'] = res[0][4][0]
+        except:
+            pass
+    if params['hostname'] and not params['name']:
+        params['name'] = params['hostname'].split('.')[0]
+    if not params['ip']:
+        module.fail_json(msg='IP address not specified or cannot be derived from hostname')
+
+    # make create cmd
+    create_cmd = 'vzctl create %d --ostemplate %s --ipadd %s/24' % ( \
+            params['ctid'], params['ostemplate'], params['ip'])
+    for p in ['hostname', 'name']:
+        if params[p]:
+            create_cmd += " --%s \'%s\'" % (p, params[p])
+
+    set_cmd = 'vzctl set %d' % params['ctid']
+    for p in ['ram', 'swap', 'nameserver', 'searchdomain', 'onboot', 'diskspace']:
+        if params[p]:
+            set_cmd += " --%s \'%s\'" % (p, params[p])
+    set_cmd += ' --save'
+
+    module.run_command(create_cmd)
+    module.run_command(set_cmd)
+
+    module.exit_json(changed=True, create_cmd=create_cmd, set_cmd=set_cmd)
+
+# include magic from lib/ansible/module_common.py
+#<<INCLUDE_ANSIBLE_MODULE_COMMON>>
+main()
