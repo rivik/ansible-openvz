@@ -3,62 +3,122 @@
 
 import socket
 
-def main():
-    arg_spec  = dict(
-        ctid       = dict(required=False, type='int'),
-        ostemplate = dict(default='ubuntu-12.04-x86_64', type='str'),
-        name       = dict(required=False, type='str'),
-        hostname       = dict(required=False, type='str'),
-        ip         = dict(required=False, type='str'),
+VZCTL_COMMANDS = [
+    'create', 'set', 'start', 'stop', 'restart', 'status','exec',
+]
+CREATE_DEFAULTS = {
+    'ostemplate': 'ubuntu-12.04-x86_64',
+    'ram': '512M',
+    'swap': '0M',
+    'nameserver': '77.88.8.8 8.8.8.8',
+    'searchdomain': 'yandex.ru yandex.net',
+    'onboot': 'yes',
+    'diskspace': '10G:10G',
+}
 
-        ram            = dict(default='512M', type='str'),
-        swap           = dict(default='0G', type='str'),
-        nameserver     = dict(default='77.88.8.8', type='str'),
-        searchdomain   = dict(default='yandex.ru yandex.net', type='str'),
-        onboot         = dict(default='yes', type='str'),
-        diskspace      = dict(default='10G:10G', type='str'),
-    )
-    module = AnsibleModule(argument_spec = arg_spec)
+module = None
 
-    # check params
-    params = module.params
-    if params['ctid'] == None:
-        rc, vzlist, vzlist_err = module.run_command('vzlist -Hajo ctid')
-        if rc != 0:
-            module.fail_json(msg='CTID not specified, unable to determine it automatically',
-                             vzlist_err=vzlist_err)
-        vzlist = sorted(map(lambda k: k[u'ctid'], module.from_json(vzlist)))
-        if not vzlist: vzlist = [0]
-        params['ctid'] = vzlist[-1] + 1
+def get_free_ctid_or_die(ctid=None):
+    if ctid:
+        return ctid
+    rc, vzlist, vzlist_err = module.run_command('vzlist -Hajo ctid')
+    if rc != 0:
+        module.fail_json(
+            msg='CTID not specified, unable to determine it automatically',
+            vzlist_err=vzlist_err
+        )
+    vzlist = sorted(map(lambda k: k[u'ctid'], module.from_json(vzlist)))
+    if not vzlist: vzlist = [0]
+    return vzlist[-1] + 1
 
-    if params['hostname'] and not params['ip']:
+def get_ip_or_die(hostname, ip=None):
+    if ip:
+        return ip
+    if hostname:
         try:
-            res = socket.getaddrinfo(params['hostname'], None, socket.AF_INET)
-            params['ip'] = res[0][4][0]
+            res = socket.getaddrinfo(hostname, None, socket.AF_INET)
+            return res[0][4][0]
         except:
             pass
-    if params['hostname'] and not params['name']:
-        params['name'] = params['hostname'].split('.')[0]
-    if not params['ip']:
-        module.fail_json(msg='IP address not specified or cannot be derived from hostname')
+    module.fail_json(
+        msg='IP address not specified or cannot be derived from hostname'
+    )
 
-    # make create cmd
-    create_cmd = 'vzctl create %d --ostemplate %s --ipadd %s/24' % ( \
-            params['ctid'], params['ostemplate'], params['ip'])
-    for p in ['hostname', 'name']:
+def vz_create():
+    params = module.params
+
+    # check params and set some defaults
+    params['ctid'] = get_free_ctid_or_die(params['ctid'])
+
+    if params['create_magic']:
+        params['ipadd'] = get_ip_or_die(params['hostname'], params['ipadd'])
+        if not params['name']:
+            params['name'] = params['hostname']
+        for p, v in CREATE_DEFAULTS.items():
+            if not params[p]:
+                params[p] = v
+
+    # generate and run commands
+    cmd = "vzctl create \'%d\'" % (params['ctid'])
+    for p in ['ostemplate', 'hostname', 'name', 'ipadd', 'diskspace']:
         if params[p]:
-            create_cmd += " --%s \'%s\'" % (p, params[p])
+            cmd += " --%s \'%s\'" % (p, params[p])
 
-    set_cmd = 'vzctl set %d' % params['ctid']
-    for p in ['ram', 'swap', 'nameserver', 'searchdomain', 'onboot', 'diskspace']:
+    module.run_command(cmd, check_rc=True)
+    if not params['create_magic']:
+        module.exit_json(changed=True, ctid=params['ctid'], cmd=cmd)
+
+    # violate standart vzctl create behaviour and set some params
+    fin_cmd = cmd
+    cmd = 'vzctl set %d' % (params['ctid'])
+    for p in ['ram', 'swap', 'nameserver', 'searchdomain', 'onboot']:
         if params[p]:
-            set_cmd += " --%s \'%s\'" % (p, params[p])
-    set_cmd += ' --save'
+            cmd += " --%s \'%s\'" % (p, params[p])
+    cmd += ' --save'
+    fin_cmd += "; " + cmd
 
-    module.run_command(create_cmd)
-    module.run_command(set_cmd)
+    module.run_command(cmd, check_rc=True)
+    module.exit_json(changed=True, ctid=params['ctid'], cmd=fin_cmd)
 
-    module.exit_json(changed=True, create_cmd=create_cmd, set_cmd=set_cmd)
+def vz_set():
+    pass
+
+def vz_start():
+    pass
+
+def vz_stop():
+    pass
+
+def vz_restart():
+    pass
+
+def vz_status():
+    pass
+
+def vz_exec():
+    pass
+
+def main():
+    global module
+    arg_spec  = dict(
+        command        = dict(required=True, choises=VZCTL_COMMANDS),
+        ctid           = dict(type='str'),
+        ostemplate     = dict(type='str'),
+        name           = dict(type='str'),
+        hostname       = dict(type='str'),
+        ipadd          = dict(type='str'),
+
+        ram            = dict(type='str'),
+        swap           = dict(type='str'),
+        nameserver     = dict(type='str'),
+        searchdomain   = dict(type='str'),
+        onboot         = dict(choises=['yes', 'no']),
+        diskspace      = dict(type='str'),
+
+        create_magic   = dict(default='yes', type='bool'),
+    )
+    module = AnsibleModule(argument_spec = arg_spec)
+    globals()['vz_' + module.params['command']]()
 
 # include magic from lib/ansible/module_common.py
 #<<INCLUDE_ANSIBLE_MODULE_COMMON>>
