@@ -47,9 +47,14 @@ options:
 
 import socket
 
-VZCTL_COMMANDS = [
-    'create', 'set', 'start', 'stop', 'restart', 'status', 'exec',
+VZCTL_SIMPLE_COMMANDS = [
+    'destroy', 'mount', 'umount', 'stop', 'restart', 'status', 'start',
 ]
+VZCTL_COMMANDS = [
+    'create', 'set', 'exec',
+]
+VZCTL_COMMANDS.extend(VZCTL_SIMPLE_COMMANDS)
+
 CREATE_DEFAULTS = {
     'ostemplate': 'ubuntu-12.04-x86_64',
     'ram': '512M',
@@ -61,6 +66,8 @@ CREATE_DEFAULTS = {
 }
 
 module = None
+
+# Helpers
 
 def get_free_ctid_or_die(ctid=None):
     if ctid:
@@ -88,6 +95,21 @@ def get_ip_or_die(hostname, ip=None):
         msg='IP address not specified or cannot be derived from hostname'
     )
 
+# vzctl commands
+
+def simple_run_and_exit():
+    params = module.params
+    if not params['ctid']:
+        module.fail_json(msg='CTID not specified')
+    rc, stdout, stderr = module.run_command(
+            'vzctl %s %s' % (params['command'], params['ctid']),
+            check_rc=True
+    	)
+    module.exit_json(changed=True, ctid=params['ctid'], cmd=params['command'],
+            stdout=stdout,
+            stderr=stderr,
+        )
+
 def vz_create():
     params = module.params
 
@@ -104,7 +126,7 @@ def vz_create():
         module.fail_json(msg='CTID not specified')
 
     # generate and run commands
-    cmd = "vzctl create \'%d\'" % (params['ctid'])
+    cmd = "vzctl create \'%s\'" % (params['ctid'])
     for p in ['ostemplate', 'hostname', 'name', 'ipadd', 'diskspace']:
         if params[p]:
             cmd += " --%s \'%s\'" % (p, params[p])
@@ -115,7 +137,7 @@ def vz_create():
 
     # violate standart vzctl create behaviour and set some params
     fin_cmd = cmd
-    cmd = 'vzctl set %d' % (params['ctid'])
+    cmd = 'vzctl set %s' % (params['ctid'])
     for p in ['ram', 'swap', 'nameserver', 'searchdomain', 'onboot']:
         if params[p]:
             cmd += " --%s \'%s\'" % (p, params[p])
@@ -126,18 +148,6 @@ def vz_create():
     module.exit_json(changed=True, ctid=params['ctid'], cmd=fin_cmd)
 
 def vz_set():
-    pass
-
-def vz_start():
-    pass
-
-def vz_stop():
-    pass
-
-def vz_restart():
-    pass
-
-def vz_status():
     pass
 
 def vz_exec():
@@ -163,6 +173,9 @@ def main():
         create_magic   = dict(default='yes', type='bool'),
     )
     module = AnsibleModule(argument_spec = arg_spec)
+    if module.params['command'] in VZCTL_SIMPLE_COMMANDS:
+        simple_run_and_exit()
+
     globals()['vz_' + module.params['command']]()
 
 # include magic from lib/ansible/module_common.py
