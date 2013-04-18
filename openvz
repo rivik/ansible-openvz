@@ -1,10 +1,54 @@
 #!/usr/bin/python
 # -*- coding: utf-8 -*-
 
+# (c) 2013, Ilya Rusalowski <vikirus@gmail.com>
+#
+# This module is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This software is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this software.  If not, see <http://www.gnu.org/licenses/>.
+#
+
+DOCUMENTATION = '''
+---
+module: openvz
+short_description: Manages openvz virtual machines
+description:
+  - Manage openvz vms.
+    Most options accept the same values as corresponding vzctl options.
+    Not all commands and parameters implemented now, see sources.
+options:
+  command:
+    description:
+      - command to run on vz host machine
+    required: true
+    default: null
+    choises: ['create', 'set', 'start', 'stop', 'restart', 'status', 'exec']
+  create_magic:
+    description:
+      - If command is C(create), some default parameters will be applied and C(vzctl set) will be called after C(vzctl create).
+        If C(name) and/or C(ipadd) is not set, ipadd = getaddrinfo(hostname), name = hostname.
+        If C(ctid) is not set, it will be set to max ctid from C(vzlist -a) output.
+        See C(CREATE_DEFAULTS) for other default options.
+  examples:
+    - code: openvz command=create hostname=vm1.example.com
+      description: Create new vm with C(ctid) = C(max(vzlist -a ...)), C(ip) = C(host -t a hostname) (will fail if dns is not properly configured), C(name) = C(hostname). See C(CREATE_DEFAULTS) for default values of C(ostemplate), C(nameservers), ...
+    - code: openvz command=create ctid=42 hostname=vm1.example.com create_magic=no
+      description: Just call C(vzctl create 42 --hostname=vm1.example.com). C(ctid) must be specified in case of C(create_magic=no).
+'''
+
 import socket
 
 VZCTL_COMMANDS = [
-    'create', 'set', 'start', 'stop', 'restart', 'status','exec',
+    'create', 'set', 'start', 'stop', 'restart', 'status', 'exec',
 ]
 CREATE_DEFAULTS = {
     'ostemplate': 'ubuntu-12.04-x86_64',
@@ -48,15 +92,16 @@ def vz_create():
     params = module.params
 
     # check params and set some defaults
-    params['ctid'] = get_free_ctid_or_die(params['ctid'])
-
     if params['create_magic']:
+        params['ctid'] = get_free_ctid_or_die(params['ctid'])
         params['ipadd'] = get_ip_or_die(params['hostname'], params['ipadd'])
         if not params['name']:
             params['name'] = params['hostname']
         for p, v in CREATE_DEFAULTS.items():
             if not params[p]:
                 params[p] = v
+    if not params['ctid']:
+        module.fail_json(msg='CTID not specified')
 
     # generate and run commands
     cmd = "vzctl create \'%d\'" % (params['ctid'])
