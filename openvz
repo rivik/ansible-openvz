@@ -31,13 +31,17 @@ options:
       - command to run on vz host machine
     required: true
     default: null
-    choises: ['create', 'set', 'start', 'stop', 'restart', 'status', 'exec']
+    choises: ['create', 'destroy', 'mount', 'umount', 'stop', 'restart',
+	      'status', 'start', 'create', 'set', 'exec', 'exec2']
   create_magic:
     description:
       - If command is C(create), some default parameters will be applied and C(vzctl set) will be called after C(vzctl create).
         If C(name) and/or C(ipadd) is not set, ipadd = getaddrinfo(hostname), name = hostname.
         If C(ctid) is not set, it will be set to max ctid from C(vzlist -a) output.
         See C(CREATE_DEFAULTS) for other default options.
+  exec_cmd:
+    description:
+      - If command is C(exec) or C(exec2), C(exec_cmd) will be executed in container as C(vzctl <ctid> exec <exec_cmd>).
   examples:
     - code: openvz command=create hostname=vm1.example.com
       description: Create new vm with C(ctid) = C(max(vzlist -a ...)), C(ip) = C(host -t a hostname) (will fail if dns is not properly configured), C(name) = C(hostname). See C(CREATE_DEFAULTS) for default values of C(ostemplate), C(nameservers), ...
@@ -51,7 +55,7 @@ VZCTL_SIMPLE_COMMANDS = [
     'destroy', 'mount', 'umount', 'stop', 'restart', 'status', 'start',
 ]
 VZCTL_COMMANDS = [
-    'create', 'set', 'exec',
+    'create', 'set', 'exec', 'exec2',
 ]
 VZCTL_COMMANDS.extend(VZCTL_SIMPLE_COMMANDS)
 
@@ -97,15 +101,16 @@ def get_ip_or_die(hostname, ip=None):
 
 # vzctl commands
 
-def simple_run_and_exit():
+def simple_run_and_exit(cmd_remainder=None, check_rc=True):
     params = module.params
     if not params['ctid']:
         module.fail_json(msg='CTID not specified')
-    rc, stdout, stderr = module.run_command(
-            'vzctl %s %s' % (params['command'], params['ctid']),
-            check_rc=True
-    	)
-    module.exit_json(changed=True, ctid=params['ctid'], cmd=params['command'],
+
+    cmd = "vzctl \'%s\' \'%s\'" % (params['command'], params['ctid'])
+    if cmd_remainder:
+        cmd += ' ' + cmd_remainder
+    rc, stdout, stderr = module.run_command(cmd, check_rc=check_rc)
+    module.exit_json(changed=True, ctid=params['ctid'], cmd=cmd,
             stdout=stdout,
             stderr=stderr,
         )
@@ -151,7 +156,14 @@ def vz_set():
     pass
 
 def vz_exec():
-    pass
+    if not module.params['exec_cmd']:
+        module.fail_json(msg='exec_cmd not specified')
+    simple_run_and_exit(module.params['exec_cmd'])
+
+def vz_exec2():
+    if not module.params['exec_cmd']:
+        module.fail_json(msg='exec_cmd not specified')
+    simple_run_and_exit(module.params['exec_cmd'], False)
 
 def main():
     global module
@@ -162,6 +174,7 @@ def main():
         name           = dict(type='str'),
         hostname       = dict(type='str'),
         ipadd          = dict(type='str'),
+        exec_cmd       = dict(type='str'),
 
         ram            = dict(type='str'),
         swap           = dict(type='str'),
